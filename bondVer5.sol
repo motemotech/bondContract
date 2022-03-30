@@ -9,7 +9,8 @@ contract playpalBond is Ownable {
 
     struct vault {
         address token;
-        uint bondPrice; // <= able to change for future
+        uint startPrice; // <= able to change for future
+        uint minimumPrice;
         uint totalAmount;
         uint remainAmount;
         uint totalEthAmount;
@@ -45,8 +46,8 @@ contract playpalBond is Ownable {
     }
 
     // Call when you want to create vault
-    function createVault(address _token, uint _bondPrice, uint _stakingDuration, uint _saleDuration, uint _bondingDuration) public {
-        vaults[vaultId] = vault(_token, _bondPrice, 0, 0, 0, block.timestamp, _stakingDuration, _saleDuration, _bondingDuration);
+    function createVault(address _token, uint _bondPrice, uint _minimumPrice, uint _stakingDuration, uint _saleDuration, uint _bondingDuration) public {
+        vaults[vaultId] = vault(_token, _bondPrice, _minimumPrice, 0, 0, 0, block.timestamp, _stakingDuration, _saleDuration, _bondingDuration);
         vaultId += 1;
     }
 
@@ -85,7 +86,7 @@ contract playpalBond is Ownable {
         );
         require(msg.value > 0, "Please send more than 0 ether");
         
-        uint amount = msg.value / vaults[_vaultId].bondPrice;
+        uint amount = msg.value / clearingPrice(_vaultId);
         vaults[_vaultId].totalEthAmount += msg.value;
         vaults[_vaultId].remainAmount -= amount;
         bonds[bondId] = bond(_vaultId, msg.sender, block.timestamp, amount);
@@ -123,6 +124,45 @@ contract playpalBond is Ownable {
         uint amount = vaults[_vaultId].totalEthAmount * vaultStakerAmount[_vaultId][msg.sender].amount / vaults[_vaultId].totalEthAmount;
         vaultStakerAmount[_vaultId][msg.sender].isEth = false;
         payable(msg.sender).transfer(amount);
+    }
+
+
+
+
+    // decide the price of bToken
+
+    function _currentPrice(uint _vaultId) private view returns (uint) {
+        uint priceRange = vaults[_vaultId].startPrice - vaults[_vaultId].minimumPrice;
+        uint elapsedSalesTime = block.timestamp - (vaults[_vaultId].createdTime + vaults[_vaultId].stakingDuration);
+        uint remainingSalesTime = vaults[_vaultId].saleDuration - elapsedSalesTime;
+        uint priceDiff = elapsedSalesTime*priceRange/remainingSalesTime;
+               
+        return vaults[_vaultId].startPrice - priceDiff; 
+    }
+
+    function tokenPrice(uint _vaultId) public view returns (uint) {
+        return vaults[_vaultId].totalEthAmount/(vaults[_vaultId].totalAmount-vaults[_vaultId].remainAmount);
+    }
+
+
+    // return the price culcurated by _currentPrice function 
+    function priceFunction(uint _vaultId) public view returns (uint) {
+        if (block.timestamp <= vaults[_vaultId].createdTime + vaults[_vaultId].stakingDuration) {
+            return vaults[_vaultId].startPrice;
+        }
+        if (block.timestamp >= vaults[_vaultId].createdTime + vaults[_vaultId].stakingDuration + vaults[_vaultId].saleDuration) {
+            return vaults[_vaultId].minimumPrice;
+        }
+
+        return _currentPrice(_vaultId);
+    }
+
+    // return the Dutch auction clearing price
+    function clearingPrice(uint _vaultId) public view returns (uint) {
+
+        uint priceA = tokenPrice(_vaultId);
+        uint priceB = priceFunction(_vaultId);
+        return priceA > priceB  ? priceA : priceB ;
     }
 
 }
